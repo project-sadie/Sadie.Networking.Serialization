@@ -2,7 +2,6 @@ using System.Collections;
 using System.Collections.ObjectModel;
 using System.Reflection;
 using Sadie.API;
-using Sadie.Networking.Serialization.Attributes;
 using Sadie.Shared.Attributes;
 
 namespace Sadie.Networking.Serialization;
@@ -35,7 +34,7 @@ public static class NetworkPacketWriterSerializer
 
     private static short GetPacketIdentifierFromAttribute(object packetObject)
     {
-        var identifierAttribute = packetObject.GetType().GetCustomAttribute<PacketIdAttribute>();
+        var identifierAttribute = packetObject.GetType().GetCustomAttribute<Sadie.Shared.Attributes.PacketIdAttribute>();
 
         if (identifierAttribute == null)
         {
