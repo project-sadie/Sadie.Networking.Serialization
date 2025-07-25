@@ -1,4 +1,5 @@
 name: publish
+
 on:
   workflow_dispatch:
   push:
@@ -45,6 +46,7 @@ jobs:
   deploy:
     needs: package
     runs-on: ubuntu-latest
+    if: github.event_name != 'pull_request_target' || github.event.pull_request.head.repo.full_name == github.repository
     steps:
       - uses: actions/download-artifact@v4
         with:
@@ -61,3 +63,4 @@ jobs:
           foreach($file in (Get-ChildItem "${{ env.NuGetDirectory }}" -Recurse -Include *.nupkg)) {
               dotnet nuget push $file --api-key "${{ secrets.NUGET_APIKEY }}" --source https://api.nuget.org/v3/index.json --skip-duplicate
           }
+
