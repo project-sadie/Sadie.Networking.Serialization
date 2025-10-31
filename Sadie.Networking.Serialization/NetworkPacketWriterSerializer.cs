@@ -110,7 +110,7 @@ public static class NetworkPacketWriterSerializer
         }
     }
     
-    public static NetworkPacketWriter Serialize(object packet)
+    public static INetworkPacketWriter Serialize(object packet)
     {
         var writer = new NetworkPacketWriter();
         
