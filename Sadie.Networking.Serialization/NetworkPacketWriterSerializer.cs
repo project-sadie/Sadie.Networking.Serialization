@@ -18,10 +18,21 @@ public static class NetworkPacketWriterSerializer
             { typeof(bool), (v, w) => w.WriteBool((bool)v) }
         };
 
-    private static void InvokeOnConfigureRules(object packet)
+    private static async Task InvokeOnConfigureRulesAsync(object packet)
     {
-        var configureRulesMethod = packet.GetType().GetMethod("OnConfigureRules");
-        configureRulesMethod?.Invoke(packet, []);
+        var method = packet.GetType().GetMethod("OnConfigureRulesAsync");
+
+        if (method == null)
+        {
+            return;
+        }
+
+        var result = method.Invoke(packet, Array.Empty<object>());
+
+        if (result is Task task)
+        {
+            await task;
+        }
     }
     
     private static async Task<bool> InvokeOnSerializeIfExistsAsync(object packet, NetworkPacketWriter writer)
@@ -162,7 +173,7 @@ public static class NetworkPacketWriterSerializer
             return writer;
         }
         
-        InvokeOnConfigureRules(packet);
+        await InvokeOnConfigureRulesAsync(packet);
         AddObjectToWriter(packet, writer);
 
         return writer;
