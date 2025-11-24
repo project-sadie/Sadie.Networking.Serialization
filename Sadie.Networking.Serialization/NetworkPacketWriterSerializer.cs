@@ -8,6 +8,16 @@ namespace Sadie.Networking.Serialization;
 
 public static class NetworkPacketWriterSerializer
 {
+    private static readonly Dictionary<Type, Action<object, NetworkPacketWriter>> PrimitiveWriters =
+        new()
+        {
+            { typeof(string), (v, w) => w.WriteString((string)v) },
+            { typeof(int),    (v, w) => w.WriteInteger((int)v) },
+            { typeof(short),  (v, w) => w.WriteShort((short)v) },
+            { typeof(long),   (v, w) => w.WriteLong((long)v) },
+            { typeof(bool),   (v, w) => w.WriteBool((bool)v) }
+        };
+
     private static void InvokeOnConfigureRules(object packet)
     {
         var configureRulesMethod = packet.GetType().GetMethod("OnConfigureRules");
@@ -36,12 +46,8 @@ public static class NetworkPacketWriterSerializer
     {
         var identifierAttribute = packetObject.GetType().GetCustomAttribute<PacketIdAttribute>();
 
-        if (identifierAttribute == null)
-        {
-            throw new InvalidOperationException($"Missing packet identifier attribute for packet type {packetObject.GetType()}");
-        }
-
-        return identifierAttribute.Id;
+        return identifierAttribute?.Id ?? 
+               throw new InvalidOperationException($"Missing packet identifier attribute for packet type {packetObject.GetType()}");
     }
     
     private static Dictionary<PropertyInfo, Action<INetworkPacketWriter>> GetRuleMap(object classObject, string propertyName)
@@ -66,7 +72,92 @@ public static class NetworkPacketWriterSerializer
             .GetType()
             .BaseType?.GetProperty("ConversionRules")
             ?.GetValue(classObject)!;
-    
+
+    private static bool TryWritePrimitive(Type type, object value, NetworkPacketWriter writer)
+    {
+        if (!PrimitiveWriters.TryGetValue(type, out var action))
+        {
+            return false;
+        }
+        
+        action(value, writer);
+        return true;
+    }
+
+    private static bool TryWriteList(PropertyInfo property, object packet, NetworkPacketWriter writer)
+    {
+        var type = property.PropertyType;
+        
+        if (!type.IsGenericType)
+        {
+            return false;
+        }
+
+        var def = type.GetGenericTypeDefinition();
+        
+        if (def != typeof(List<>) && def != typeof(Collection<>))
+        {
+            return false;
+        }
+
+        var list = (IEnumerable)property.GetValue(packet)!;
+        var items = list.Cast<object>().ToList();
+
+        writer.WriteInteger(items.Count);
+
+        foreach (var item in items)
+        {
+            if (!TryWritePrimitive(item.GetType(), item, writer))
+            {
+                AddObjectToWriter(item, writer, true);
+            }
+        }
+
+        return true;
+    }
+
+    private static bool TryWriteDictionary(PropertyInfo property, object packet, NetworkPacketWriter writer)
+    {
+        var type = property.PropertyType;
+        
+        if (!type.IsGenericType)
+        {
+            return false;
+        }
+        
+        if (type.GetGenericTypeDefinition() != typeof(Dictionary<,>))
+        {
+            return false;
+        }
+
+        var dict = (IDictionary)property.GetValue(packet)!;
+        writer.WriteInteger(dict.Count);
+
+        foreach (DictionaryEntry entry in dict)
+        {
+            var kt = entry.Key.GetType();
+            var vt = entry.Value?.GetType();
+
+            if (!TryWritePrimitive(kt, entry.Key, writer))
+            {
+                throw new InvalidOperationException("Unsupported dictionary key type.");
+            }
+
+            if (entry.Value == null)
+            {
+                writer.WriteString("");
+                continue;
+            }
+
+            if (!TryWritePrimitive(vt!, entry.Value, writer))
+            {
+                AddObjectToWriter(entry.Value, writer, true);
+            }
+        }
+
+        return true;
+    }
+
     private static void AddObjectToWriter(object packet, NetworkPacketWriter writer, bool needsAttribute = false)
     {
         var properties = packet
@@ -127,145 +218,39 @@ public static class NetworkPacketWriterSerializer
         return writer;
     }
 
-    private static void WriteStringListPropertyToWriter(List<string?> list, NetworkPacketWriter writer)
-    {
-        writer.WriteInteger(list.Count);
-            
-        foreach (var item in list)
-        {
-            writer.WriteString(item ?? "");
-        }
-    }
-
-    private static void WriteArbitraryListPropertyToWriter(PropertyInfo propertyInfo, NetworkPacketWriter writer, object packet)
-    {
-        var elements = (ICollection)propertyInfo.GetValue(packet)!;
-        writer.WriteInteger(elements.Count);
-
-        foreach (var element in elements)
-        {
-            var properties = element.GetType().GetProperties();
-            
-            foreach (var elementProperty in properties)
-            {
-                WriteProperty(elementProperty, writer, element);
-            }
-        }
-    }
-
     private static void WriteProperty(PropertyInfo property, NetworkPacketWriter writer, object packet)
     {
         var type = property.PropertyType;
-        
-        if (type == typeof(string))
-        {
-            WriteType(type, property.GetValue(packet)!, writer);
-        }
-        else if (type == typeof(int))
-        {
-            WriteType(type, property.GetValue(packet)!, writer);
-        }
-        else if (type == typeof(short))
-        {
-            WriteType(type, property.GetValue(packet)!, writer);
-        }
-        else if (type == typeof(long))
-        {
-            WriteType(typeof(long), property.GetValue(packet)!, writer);
-        }
-        else if (type == typeof(bool))
-        {
-            WriteType(typeof(bool), property.GetValue(packet)!, writer);
-        }
-        else if (type == typeof(List<string>))
-        {
-            var collection = (List<string?>)property.GetValue(packet)!;
-            WriteStringListPropertyToWriter(collection, writer);
-        }
-        else if (type == typeof(Dictionary<int, string>))
-        {
-            var collection = (Dictionary<int, string?>)property.GetValue(packet)!;
-            
-            writer.WriteInteger(collection.Count);
-            
-            foreach (var (key, value) in collection)
-            {
-                writer.WriteInteger(key);
-                writer.WriteString(value ?? "");
-            }
-        }
-        else if (type == typeof(Dictionary<int, long>))
-        {
-            var collection = (Dictionary<int, long>)property.GetValue(packet)!;
-            
-            writer.WriteInteger(collection.Count);
-            
-            foreach (var (key, value) in collection)
-            {
-                writer.WriteInteger(key);
-                writer.WriteLong(value);
-            }
-        }
-        else if (type == typeof(Dictionary<int, List<string>>))
-        {
-            var collection = (Dictionary<int, List<string>>)property.GetValue(packet)!;
-            
-            writer.WriteInteger(collection.Count);
-            
-            foreach (var (key, value) in collection)
-            {
-                writer.WriteInteger(key);
+        var value = property.GetValue(packet);
 
-                foreach (var inner in value)
-                {
-                    writer.WriteString(inner);
-                }
-            }
-        }
-        else if (type == typeof(Dictionary<string, int>))
+        if (value == null)
         {
-            var collection = (Dictionary<string, int>)property.GetValue(packet)!;
-            
-            writer.WriteInteger(collection.Count);
-            
-            foreach (var (key, value) in collection)
-            {
-                writer.WriteString(key);
-                writer.WriteInteger(value);
-            }
+            return;
         }
-        else if (type == typeof(Dictionary<string, string>))
+
+        if (TryWritePrimitive(type, value, writer))
         {
-            var collection = (Dictionary<string, string>)property.GetValue(packet)!;
-            
-            writer.WriteInteger(collection.Count);
-            
-            foreach (var (key, value) in collection)
-            {
-                writer.WriteString(key);
-                writer.WriteString(value);
-            }
+            return;
         }
-        else if (type.IsGenericType && (type.GetGenericTypeDefinition() == typeof(List<>) || type.GetGenericTypeDefinition() == typeof(Collection<>)))
+
+        if (TryWriteList(property, packet, writer))
         {
-            WriteArbitraryListPropertyToWriter(property, writer, packet);
+            return;
         }
-        else if (type != typeof(Dictionary<PropertyInfo, Action<NetworkPacketWriter>>) && 
-                 type != typeof(Dictionary<PropertyInfo, KeyValuePair<Type, Func<object, object>>>))
+
+        if (TryWriteDictionary(property, packet, writer))
         {
-            AddObjectToWriter(property.GetValue(packet)!, writer, true);
+            return;
         }
-        else
-        {
-            WriteType(type, property.GetValue(packet)!, writer);
-        }
+
+        AddObjectToWriter(value, writer, true);
     }
 
     private static void WriteType(Type type, object value, NetworkPacketWriter writer)
     {
         if (type == typeof(string))
         {
-            writer.WriteString((value as string)!);
+            writer.WriteString((string)value);
         }
         else if (type == typeof(int))
         {
