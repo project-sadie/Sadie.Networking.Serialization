@@ -24,23 +24,33 @@ public static class NetworkPacketWriterSerializer
         configureRulesMethod?.Invoke(packet, []);
     }
     
-    private static bool InvokeOnSerializeIfExists(object packet, NetworkPacketWriter writer)
+    private static async Task<bool> InvokeOnSerializeIfExistsAsync(object packet, NetworkPacketWriter writer)
     {
-        var onSerialize = packet.GetType().GetMethod("OnSerialize");
+        var onSerialize = packet.GetType().GetMethod("OnSerializeAsync");
 
         if (onSerialize == null)
         {
             return false;
         }
-        
+
         if (onSerialize.GetBaseDefinition().DeclaringType == onSerialize.DeclaringType)
         {
             return false;
         }
+
+        var result = onSerialize.Invoke(packet, [writer]);
+
+        if (result is not Task task)
+        {
+            return false;
+        }
         
-        onSerialize.Invoke(packet, [writer]);
+        await task;
+        
         return true;
+
     }
+
 
     private static short GetPacketIdentifierFromAttribute(object packetObject)
     {
@@ -141,13 +151,13 @@ public static class NetworkPacketWriterSerializer
         }
     }
     
-    public static INetworkPacketWriter Serialize(object packet)
+    public static async Task<INetworkPacketWriter> SerializeAsync(object packet)
     {
         var writer = new NetworkPacketWriter();
         
         writer.WriteShort(GetPacketIdentifierFromAttribute(packet));
 
-        if (InvokeOnSerializeIfExists(packet, writer))
+        if (await InvokeOnSerializeIfExistsAsync(packet, writer))
         {
             return writer;
         }
